@@ -148,9 +148,13 @@ def cmd_sync(args):
             skill_name = os.path.basename(skill_path)
             target = os.path.join(tool_skill_dir, skill_name)
 
-            # Remove existing symlink/file
+            # Remove existing symlink/file/directory
             if os.path.exists(target) or os.path.islink(target):
-                os.remove(target)
+                if os.path.isdir(target) and not os.path.islink(target):
+                    import shutil
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
 
             # Create symlink
             os.symlink(skill_path, target)
@@ -209,10 +213,8 @@ def cmd_list(args):
 
     if args.category:
         # Filter by category (gstack, team, personal)
-        filtered = []
-        for skill in skills:
-            if f"/skills/{args.category}/" in skill:
-                filtered.append(skill)
+        category_path = os.path.join('skills', args.category)
+        filtered = [s for s in skills if category_path in s]
         skills = filtered
 
     if not skills:
@@ -367,6 +369,17 @@ def cmd_tag(args):
         print("ERROR: Not a git repository")
         sys.exit(1)
 
+    # Check if tag already exists
+    tag_list = subprocess.run(
+        ['git', 'tag', '-l', version],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if tag_list.stdout.strip():
+        print(f"ERROR: Tag '{version}' already exists. Use a different version or delete the existing tag.")
+        sys.exit(1)
+
     # Create tag
     tag_result = subprocess.run(
         ['git', 'tag', version],
@@ -420,27 +433,36 @@ def cmd_contrib(args):
         print(f"ERROR: Branch '{branch_name}' already exists")
         sys.exit(1)
 
-    # Create branch
-    subprocess.run(['git', 'checkout', '-b', branch_name], cwd=repo_root, check=True)
-    print(f"Created branch: {branch_name}")
+        # Create branch
+        checkout_result = subprocess.run(['git', 'checkout', '-b', branch_name], cwd=repo_root, capture_output=True, text=True)
+        if checkout_result.returncode != 0:
+            print(f"ERROR: Failed to create branch: {checkout_result.stderr}")
+            sys.exit(1)
+        print(f"Created branch: {branch_name}")
 
-    # Add skill changes (assumes changes are already made)
-    subprocess.run(['git', 'add', skill_path], cwd=repo_root, check=True)
+        # Add skill changes (assumes changes are already made)
+        add_result = subprocess.run(['git', 'add', skill_path], cwd=repo_root, capture_output=True, text=True)
+        if add_result.returncode != 0:
+            print(f"ERROR: Failed to add changes: {add_result.stderr}")
+            # Cleanup branch
+            subprocess.run(['git', 'checkout', '-'], cwd=repo_root)
+            subprocess.run(['git', 'branch', '-D', branch_name], cwd=repo_root)
+            sys.exit(1)
 
-    # Commit
-    commit_msg = f"Contrib: {skill_name} changes"
-    commit_result = subprocess.run(
-        ['git', 'commit', '-m', commit_msg],
-        capture_output=True,
-        text=True,
-        cwd=repo_root
-    )
-    if commit_result.returncode != 0:
-        print(f"ERROR: Commit failed: {commit_result.stderr}")
-        # Cleanup branch
-        subprocess.run(['git', 'checkout', '-'], cwd=repo_root)
-        subprocess.run(['git', 'branch', '-D', branch_name], cwd=repo_root)
-        sys.exit(1)
+        # Commit
+        commit_msg = f"Contrib: {skill_name} changes"
+        commit_result = subprocess.run(
+            ['git', 'commit', '-m', commit_msg],
+            capture_output=True,
+            text=True,
+            cwd=repo_root
+        )
+        if commit_result.returncode != 0:
+            print(f"ERROR: Commit failed: {commit_result.stderr}")
+            # Cleanup branch
+            subprocess.run(['git', 'checkout', '-'], cwd=repo_root)
+            subprocess.run(['git', 'branch', '-D', branch_name], cwd=repo_root)
+            sys.exit(1)
 
     # Push
     push_result = subprocess.run(
@@ -469,11 +491,14 @@ def cmd_contrib(args):
 
 def find_repo_root():
     """Find the team-ai-warehouse repository root."""
-    current = os.getcwd()
-    while current != '/':
+    current = os.path.abspath(os.getcwd())
+    while True:
         if os.path.isfile(os.path.join(current, 'warehouse.yaml')):
             return current
-        current = os.path.dirname(current)
+        parent = os.path.dirname(current)
+        if parent == current:  # Reached filesystem root
+            break
+        current = parent
     return None
 
 def main():

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UAASP Skill Tracking Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #0a0e17; color: #e0e0e0; padding: 20px; }
+h1 { color: #00ff88; margin-bottom: 20px; font-size: 24px; }
+h2 { color: #00ccff; margin: 20px 0 10px; font-size: 18px; }
+.section { background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+.charts { display: flex; gap: 20px; flex-wrap: wrap; }
+.chart-box { flex: 1; min-width: 300px; }
+canvas { max-width: 100%; background: #0a0e17; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #1f2937; }
+th { background: #1f2937; color: #00ff88; font-size: 12px; text-transform: uppercase; }
+tr:hover { background: #1f2937; }
+.score-high { color: #00ff88; }
+.score-mid { color: #ffaa00; }
+.score-low { color: #ff4444; }
+.stats { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px; }
+.stat-card { background: #1f2937; padding: 15px; border-radius: 6px; min-width: 150px; }
+.stat-value { font-size: 24px; color: #00ff88; font-weight: bold; }
+.stat-label { font-size: 11px; color: #888; text-transform: uppercase; margin-top: 5px; }
+</style>
+</head>
+<body>
+<h1>UAASP Skill Tracking Dashboard</h1>
+
+<div class="stats" id="stats"></div>
+
+<div class="section">
+<h2>Tool Usage Distribution</h2>
+<div class="charts">
+<div class="chart-box"><canvas id="pieChart" width="300" height="300"></canvas></div>
+<div class="chart-box"><canvas id="barChart" width="400" height="300"></canvas></div>
+</div>
+</div>
+
+<div class="section">
+<h2>Skill Performance Scores</h2>
+<table id="perfTable">
+<thead><tr><th>Skill</th><th>Calls</th><th>Success %</th><th>Avg Duration (ms)</th><th>Score</th></tr></thead>
+<tbody id="perfBody"></tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>Recent Activity</h2>
+<table id="recentTable">
+<thead><tr><th>Time</th><th>Skill</th><th>Tool</th><th>Success</th><th>Duration</th></tr></thead>
+<tbody id="recentBody"></tbody>
+</table>
+</div>
+
+<script>
+// Parse JSONL
+async function loadData() {
+  const response = await fetch('metrics.jsonl');
+  const text = await response.text();
+  return text.trim().split('\n').filter(l => l).map(JSON.parse);
+}
+
+function drawPie(ctx, data, labels, colors) {
+  const total = data.reduce((a, b) => a + b, 0);
+  let startAngle = 0;
+  const cx = 150, cy = 150, r = 100;
+
+  data.forEach((val, i) => {
+    const slice = (val / total) * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, startAngle, startAngle + slice);
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fill();
+    ctx.strokeStyle = '#0a0e17';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Label
+    if (val > 0) {
+      const mid = startAngle + slice / 2;
+      const lx = cx + (r + 20) * Math.cos(mid);
+      const ly = cy + (r + 20) * Math.sin(mid);
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(labels[i], lx, ly);
+    }
+    startAngle += slice;
+  });
+}
+
+function drawBar(ctx, data, labels, colors) {
+  const w = 400, h = 280, barW = 30, gap = 10;
+  const max = Math.max(...data);
+  const scale = (h - 40) / max;
+
+  data.forEach((val, i) => {
+    const x = 40 + i * (barW + gap);
+    const barH = val * scale;
+    const y = h - 30 - barH;
+
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillRect(x, y, barW, barH);
+
+    // Value on top
+    ctx.fillStyle = '#e0e0e0';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(val, x + barW/2, y - 5);
+
+    // Label below
+    ctx.save();
+    ctx.translate(x + barW/2, h - 10);
+    ctx.rotate(-Math.PI / 4);
+    ctx.textAlign = 'right';
+    ctx.fillText(labels[i], 0, 0);
+    ctx.restore();
+  });
+}
+
+async function main() {
+  const data = await loadData();
+
+  // Stats
+  const totalCalls = data.length;
+  const successRate = ((data.filter(d => d.success).length / totalCalls) * 100).toFixed(1);
+  const avgDuration = (data.reduce((a, d) => a + d.duration_ms, 0) / totalCalls).toFixed(0);
+  const uniqueSkills = new Set(data.map(d => d.skill_name)).size;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="stat-value">${totalCalls}</div><div class="stat-label">Total Calls</div></div>
+    <div class="stat-card"><div class="stat-value">${successRate}%</div><div class="stat-label">Success Rate</div></div>
+    <div class="stat-card"><div class="stat-value">${avgDuration}</div><div class="stat-label">Avg Duration (ms)</div></div>
+    <div class="stat-card"><div class="stat-value">${uniqueSkills}</div><div class="stat-label">Unique Skills</div></div>
+  `;
+
+  // Tool distribution
+  const toolCounts = {};
+  data.forEach(d => { toolCounts[d.tool] = (toolCounts[d.tool] || 0) + 1; });
+  const tools = Object.keys(toolCounts);
+  const toolData = Object.values(toolCounts);
+  const toolColors = ['#00ff88', '#00ccff', '#ff6b6b', '#ffd93d', '#6bcb77'];
+
+  drawPie(document.getElementById('pieChart').getContext('2d'), toolData, tools, toolColors);
+
+  // Top 10 skills
+  const skillCounts = {};
+  data.forEach(d => { skillCounts[d.skill_name] = (skillCounts[d.skill_name] || 0) + 1; });
+  const topSkills = Object.entries(skillCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const skillData = topSkills.map(s => s[1]);
+  const skillLabels = topSkills.map(s => s[0]);
+
+  drawBar(document.getElementById('barChart').getContext('2d'), skillData, skillLabels, toolColors);
+
+  // Performance table
+  const perfRows = Object.entries(skillCounts).map(([skill, calls]) => {
+    const skillData = data.filter(d => d.skill_name === skill);
+    const successPct = ((skillData.filter(d => d.success).length / calls) * 100).toFixed(1);
+    const avgDur = (skillData.reduce((a, d) => a + d.duration_ms, 0) / calls).toFixed(0);
+    const score = (successPct * 0.5 + (100 - avgDur / 100) * 0.5).toFixed(1);
+    const scoreClass = score > 70 ? 'score-high' : score > 40 ? 'score-mid' : 'score-low';
+    return `<tr><td>${skill}</td><td>${calls}</td><td>${successPct}%</td><td>${avgDur}</td><td class="${scoreClass}">${score}</td></tr>`;
+  }).join('');
+  document.getElementById('perfBody').innerHTML = perfRows;
+
+  // Recent activity
+  const recentRows = data.slice(-20).reverse().map(d => {
+    const time = new Date(d.timestamp).toLocaleTimeString();
+    const succClass = d.success ? 'score-high' : 'score-low';
+    return `<tr><td>${time}</td><td>${d.skill_name}</td><td>${d.tool}</td><td class="${succClass}">${d.success}</td><td>${d.duration_ms}ms</td></tr>`;
+  }).join('');
+  document.getElementById('recentBody').innerHTML = recentRows;
+}
+
+main();
+</script>
+</body>
+</html>

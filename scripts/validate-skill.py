@@ -7,7 +7,12 @@ Usage: python3 validate-skill.py <skill-directory>
 import sys
 import os
 import re
-import yaml
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML library is required. Install it with: pip install PyYAML")
+    sys.exit(1)
 
 def validate_skill(skill_dir):
     """Validate a single skill directory against the SKILL.md spec."""
