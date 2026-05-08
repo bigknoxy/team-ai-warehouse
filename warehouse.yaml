@@ -1,0 +1,51 @@
+# Warehouse Manifest
+# Universal AI Agent Standardization Platform (UAASP)
+# Version: 1.0.0 (May 2026)
+
+manifest_version: "1.0"
+name: "team-ai-warehouse"
+description: "Shared AI agent skills, agents, and contexts for team standardization"
+version: "1.0.0"
+created: "2026-05-07"
+maintained_by: "team-leads"
+
+# Tools supported (must match agentskills.io spec)
+tools:
+  - claude-code
+  - opencode
+  - codex
+  - pi
+
+# Skill directories (relative to repo root)
+skill_dirs:
+  - skills/gstack    # Migrated from ~/.claude/skills/gstack
+  - skills/team      # Team-specific skills
+  - skills/personal  # Personal skills (Josh)
+
+# Agent config directories
+agent_dirs:
+  - agents/claude-code
+  - agents/opencode
+  - agents/codex
+
+# Context files (loaded at agent startup)
+contexts:
+  - contexts/AGENTS.md      # Universal (all tools)
+  - contexts/claude.md      # Claude Code-specific
+  - contexts/opencode.json  # OpenCode-specific
+
+# Hooks (lifecycle scripts)
+hooks_dir: "hooks"
+
+# Training materials
+training_dir: "training"
+
+# Tracking/metrics
+tracking_dir: "tracking"
+
+# Validation settings
+validation:
+  skill_name_max_length: 64
+  skill_desc_max_length: 1024
+  required_fields: ["name", "description"]
+  allowed_name_chars: "a-z0-9-"

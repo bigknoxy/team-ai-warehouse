@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""
+UAA - Universal AI Agent CLI Tool
+Manages AI agent skills across multiple tools (Claude Code, OpenCode, Codex, Pi)
+"""
+
+import os
+import sys
+import argparse
+import subprocess
+import yaml
+from datetime import datetime
+from pathlib import Path
+
+# Tool configuration: tool name -> (config_dir, skills_subdir)
+TOOL_CONFIGS = {
+    'claude': {'dir': '~/.claude', 'skills': 'skills'},
+    'opencode': {'dir': '~/.config/opencode', 'skills': 'skills'},
+    'codex': {'dir': '~/.codex', 'skills': 'skills'},
+    'pi': {'dir': '~/.pi', 'skills': 'skills'},
+}
+
+def load_warehouse_config(repo_root):
+    """Load warehouse.yaml configuration."""
+    config_path = os.path.join(repo_root, 'warehouse.yaml')
+    if not os.path.isfile(config_path):
+        return None
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def get_skill_dirs(repo_root, config):
+    """Get list of skill directories from config."""
+    if not config or 'skill_dirs' not in config:
+        return []
+    dirs = []
+    for d in config['skill_dirs']:
+        full_path = os.path.join(repo_root, d)
+        if os.path.isdir(full_path):
+            dirs.append(full_path)
+    return dirs
+
+def get_all_skills(repo_root, config):
+    """Get all skills from all skill directories."""
+    skills = []
+    skill_dirs = get_skill_dirs(repo_root, config)
+    for skill_dir in skill_dirs:
+        if os.path.isdir(skill_dir):
+            for entry in os.listdir(skill_dir):
+                entry_path = os.path.join(skill_dir, entry)
+                if os.path.isdir(entry_path):
+                    skill_md = os.path.join(entry_path, 'SKILL.md')
+                    if os.path.isfile(skill_md):
+                        skills.append(entry_path)
+    return sorted(skills)
+
+def cmd_init(args):
+    """Initialize warehouse structure at path."""
+    path = args.path or os.getcwd()
+    path = os.path.abspath(path)
+
+    print(f"Initializing warehouse at: {path}")
+
+    # Create directory structure
+    dirs = [
+        'skills/gstack',
+        'skills/team',
+        'skills/personal',
+        'agents/claude-code',
+        'agents/opencode',
+        'agents/codex',
+        'contexts',
+        'hooks',
+        'training',
+        'tracking',
+        'scripts',
+        'testing',
+    ]
+
+    for d in dirs:
+        full_path = os.path.join(path, d)
+        os.makedirs(full_path, exist_ok=True)
+        print(f"  Created: {d}")
+
+    # Create warehouse.yaml if it doesn't exist
+    config_path = os.path.join(path, 'warehouse.yaml')
+    if not os.path.isfile(config_path):
+        config = {
+            'manifest_version': '1.0',
+            'name': 'team-ai-warehouse',
+            'description': 'Shared AI agent skills for team standardization',
+            'version': '1.0.0',
+            'created': datetime.now().strftime('%Y-%m-%d'),
+            'maintained_by': 'team-leads',
+            'tools': ['claude-code', 'opencode', 'codex', 'pi'],
+            'skill_dirs': ['skills/gstack', 'skills/team', 'skills/personal'],
+            'agent_dirs': ['agents/claude-code', 'agents/opencode', 'agents/codex'],
+            'contexts': ['contexts/AGENTS.md'],
+            'hooks_dir': 'hooks',
+            'training_dir': 'training',
+            'tracking_dir': 'tracking',
+        }
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False)
+        print(f"  Created: warehouse.yaml")
+
+    print(f"\nWarehouse initialized at {path}")
+
+def cmd_sync(args):
+    """Sync skills to all tool directories."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    config = load_warehouse_config(repo_root)
+    if not config:
+        print("ERROR: warehouse.yaml not found")
+        sys.exit(1)
+
+    # Determine which tools to sync
+    if args.all:
+        tools = list(TOOL_CONFIGS.keys())
+    elif args.tools:
+        tools = [t.strip() for t in args.tools.split(',')]
+    else:
+        tools = list(TOOL_CONFIGS.keys())
+
+    # Get all skills
+    skills = get_all_skills(repo_root, config)
+    if not skills:
+        print("No skills found to sync")
+        return
+
+    print(f"Syncing {len(skills)} skills to {len(tools)} tool(s)...")
+
+    for tool in tools:
+        if tool not in TOOL_CONFIGS:
+            print(f"  WARNING: Unknown tool '{tool}', skipping")
+            continue
+
+        tool_config = TOOL_CONFIGS[tool]
+        tool_skill_dir = os.path.expanduser(f"{tool_config['dir']}/{tool_config['skills']}")
+        os.makedirs(tool_skill_dir, exist_ok=True)
+
+        print(f"\nSyncing to {tool} ({tool_skill_dir}):")
+
+        for skill_path in skills:
+            skill_name = os.path.basename(skill_path)
+            target = os.path.join(tool_skill_dir, skill_name)
+
+            # Remove existing symlink/file
+            if os.path.exists(target) or os.path.islink(target):
+                os.remove(target)
+
+            # Create symlink
+            os.symlink(skill_path, target)
+            print(f"  -> {skill_name}")
+
+    print(f"\nSync complete!")
+
+def cmd_status(args):
+    """Show current warehouse status."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    config = load_warehouse_config(repo_root)
+
+    print("=" * 60)
+    print("UAA Warehouse Status")
+    print("=" * 60)
+
+    # Skills count
+    skills = get_all_skills(repo_root, config)
+    print(f"\nSkills: {len(skills)} total")
+    for skill in skills:
+        print(f"  - {os.path.basename(skill)} ({skill})")
+
+    # warehouse.yaml last modified
+    config_path = os.path.join(repo_root, 'warehouse.yaml')
+    if os.path.isfile(config_path):
+        mtime = os.path.getmtime(config_path)
+        dt = datetime.fromtimestamp(mtime)
+        print(f"\nwarehouse.yaml last modified: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Tool directories status
+    print(f"\nTool directories:")
+    for tool, tool_config in TOOL_CONFIGS.items():
+        tool_skill_dir = os.path.expanduser(f"{tool_config['dir']}/{tool_config['skills']}")
+        if os.path.isdir(tool_skill_dir):
+            # Count symlinks
+            symlinks = [f for f in os.listdir(tool_skill_dir) if os.path.islink(os.path.join(tool_skill_dir, f))]
+            print(f"  {tool:10} {tool_skill_dir:40} {len(symlinks)} symlinks")
+        else:
+            print(f"  {tool:10} {tool_skill_dir:40} NOT FOUND")
+
+    print("=" * 60)
+
+def cmd_list(args):
+    """List all skills, optionally filtered by category."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    config = load_warehouse_config(repo_root)
+    skills = get_all_skills(repo_root, config)
+
+    if args.category:
+        # Filter by category (gstack, team, personal)
+        filtered = []
+        for skill in skills:
+            if f"/skills/{args.category}/" in skill:
+                filtered.append(skill)
+        skills = filtered
+
+    if not skills:
+        print("No skills found")
+        return
+
+    print(f"Skills ({len(skills)}):")
+    print("=" * 60)
+
+    for skill in skills:
+        skill_name = os.path.basename(skill)
+        # Read SKILL.md for description
+        skill_md = os.path.join(skill, 'SKILL.md')
+        desc = ""
+        if os.path.isfile(skill_md):
+            with open(skill_md, 'r') as f:
+                content = f.read()
+            if content.startswith('---'):
+                parts = content.split('---', 2)
+                if len(parts) >= 3:
+                    try:
+                        fm = yaml.safe_load(parts[1])
+                        if isinstance(fm, dict) and 'description' in fm:
+                            desc = fm['description'][:80]
+                    except:
+                        pass
+        print(f"  {skill_name:30} {desc}")
+
+def cmd_validate(args):
+    """Validate all skills against SKILL.md spec."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    config = load_warehouse_config(repo_root)
+    skills = get_all_skills(repo_root, config)
+
+    if not skills:
+        print("No skills found to validate")
+        return
+
+    validator = os.path.join(repo_root, 'scripts', 'validate-skill.py')
+    if not os.path.isfile(validator):
+        print(f"ERROR: Validator not found at {validator}")
+        sys.exit(1)
+
+    print(f"Validating {len(skills)} skills...")
+    print("=" * 60)
+
+    passed = 0
+    failed = 0
+
+    for skill in skills:
+        skill_name = os.path.basename(skill)
+        result = subprocess.run(
+            [sys.executable, validator, skill],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print(f"  PASS: {skill_name}")
+            passed += 1
+        else:
+            print(f"  FAIL: {skill_name}")
+            if args.all:
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        print(f"        {line}")
+            failed += 1
+
+    print("=" * 60)
+    print(f"Results: {passed} passed, {failed} failed")
+
+    if failed > 0:
+        sys.exit(1)
+
+def cmd_rollback(args):
+    """Rollback to a Git tag."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    tag = args.tag
+
+    # Check if tag exists
+    result = subprocess.run(
+        ['git', 'tag', '-l', tag],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+
+    if not result.stdout.strip():
+        print(f"ERROR: Tag '{tag}' not found")
+        sys.exit(1)
+
+    print(f"Rolling back to tag: {tag}")
+
+    # Perform git checkout
+    result = subprocess.run(
+        ['git', 'checkout', f'tags/{tag}'],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+
+    if result.returncode == 0:
+        print(f"Successfully rolled back to {tag}")
+    else:
+        print(f"ERROR: Rollback failed")
+        print(result.stderr)
+        sys.exit(1)
+
+def cmd_version(args):
+    """Show current warehouse version."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    config = load_warehouse_config(repo_root)
+    if not config:
+        print("ERROR: warehouse.yaml not found")
+        sys.exit(1)
+
+    version = config.get('version', 'not set')
+    print(f"Warehouse version: {version}")
+
+
+def cmd_tag(args):
+    """Create Git tag for current state."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    version = args.version
+    if not version:
+        print("ERROR: version argument required")
+        sys.exit(1)
+
+    # Check if git repo
+    result = subprocess.run(
+        ['git', 'rev-parse', '--is-inside-work-tree'],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if result.returncode != 0:
+        print("ERROR: Not a git repository")
+        sys.exit(1)
+
+    # Create tag
+    tag_result = subprocess.run(
+        ['git', 'tag', version],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if tag_result.returncode == 0:
+        print(f"Created tag: {version}")
+    else:
+        print(f"ERROR: Failed to create tag: {tag_result.stderr}")
+        sys.exit(1)
+
+
+def cmd_contrib(args):
+    """Contribute changes to a skill."""
+    repo_root = find_repo_root()
+    if not repo_root:
+        print("ERROR: Not in a team-ai-warehouse repository")
+        sys.exit(1)
+
+    skill_name = args.skill_name
+    if not skill_name:
+        print("ERROR: skill-name argument required")
+        sys.exit(1)
+
+    # Check if skill exists
+    config = load_warehouse_config(repo_root)
+    skill_dirs = get_skill_dirs(repo_root, config)
+    skill_path = None
+    for d in skill_dirs:
+        candidate = os.path.join(d, skill_name)
+        if os.path.isdir(candidate):
+            skill_path = candidate
+            break
+
+    if not skill_path:
+        print(f"ERROR: Skill '{skill_name}' not found in skill directories")
+        sys.exit(1)
+
+    branch_name = f"contrib/{skill_name}"
+
+    # Check if branch already exists
+    branch_check = subprocess.run(
+        ['git', 'rev-parse', '--verify', branch_name],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if branch_check.returncode == 0:
+        print(f"ERROR: Branch '{branch_name}' already exists")
+        sys.exit(1)
+
+    # Create branch
+    subprocess.run(['git', 'checkout', '-b', branch_name], cwd=repo_root, check=True)
+    print(f"Created branch: {branch_name}")
+
+    # Add skill changes (assumes changes are already made)
+    subprocess.run(['git', 'add', skill_path], cwd=repo_root, check=True)
+
+    # Commit
+    commit_msg = f"Contrib: {skill_name} changes"
+    commit_result = subprocess.run(
+        ['git', 'commit', '-m', commit_msg],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if commit_result.returncode != 0:
+        print(f"ERROR: Commit failed: {commit_result.stderr}")
+        # Cleanup branch
+        subprocess.run(['git', 'checkout', '-'], cwd=repo_root)
+        subprocess.run(['git', 'branch', '-D', branch_name], cwd=repo_root)
+        sys.exit(1)
+
+    # Push
+    push_result = subprocess.run(
+        ['git', 'push', '-u', 'origin', branch_name],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if push_result.returncode != 0:
+        print(f"ERROR: Push failed: {push_result.stderr}")
+        sys.exit(1)
+
+    # Create PR via gh
+    pr_result = subprocess.run(
+        ['gh', 'pr', 'create', '--title', f"Contrib: {skill_name}", '--body', f"Proposed changes to {skill_name} skill"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root
+    )
+    if pr_result.returncode == 0:
+        print(f"Created PR for {skill_name}")
+    else:
+        print(f"WARNING: PR creation failed: {pr_result.stderr}")
+        print("Branch pushed successfully, create PR manually.")
+
+
+def find_repo_root():
+    """Find the team-ai-warehouse repository root."""
+    current = os.getcwd()
+    while current != '/':
+        if os.path.isfile(os.path.join(current, 'warehouse.yaml')):
+            return current
+        current = os.path.dirname(current)
+    return None
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='UAA - Universal AI Agent CLI Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # init command
+    init_parser = subparsers.add_parser('init', help='Initialize warehouse structure')
+    init_parser.add_argument('--path', help='Path to initialize (default: current directory)')
+
+    # sync command
+    sync_parser = subparsers.add_parser('sync', help='Sync skills to tool directories')
+    sync_parser.add_argument('--tools', help='Comma-separated list of tools (claude,opencode,codex,pi)')
+    sync_parser.add_argument('--all', action='store_true', help='Sync to all tools')
+
+    # status command
+    status_parser = subparsers.add_parser('status', help='Show warehouse status')
+
+    # list command
+    list_parser = subparsers.add_parser('list', help='List all skills')
+    list_parser.add_argument('--category', choices=['gstack', 'team', 'personal'], help='Filter by category')
+
+    # validate command
+    validate_parser = subparsers.add_parser('validate', help='Validate skills against SKILL.md spec')
+    validate_parser.add_argument('--all', action='store_true', help='Show all validation output')
+
+    # rollback command
+    rollback_parser = subparsers.add_parser('rollback', help='Rollback to a Git tag')
+    rollback_parser.add_argument('tag', help='Git tag to rollback to')
+
+    # version command
+    version_parser = subparsers.add_parser('version', help='Show warehouse version')
+
+    # tag command
+    tag_parser = subparsers.add_parser('tag', help='Create Git tag for current state')
+    tag_parser.add_argument('version', help='Tag version (e.g., v1.0.1)')
+
+    # contrib command
+    contrib_parser = subparsers.add_parser('contrib', help='Contribute changes to a skill')
+    contrib_parser.add_argument('skill_name', help='Name of the skill to contribute')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    commands = {
+        'init': cmd_init,
+        'sync': cmd_sync,
+        'status': cmd_status,
+        'list': cmd_list,
+        'validate': cmd_validate,
+        'rollback': cmd_rollback,
+        'version': cmd_version,
+        'tag': cmd_tag,
+        'contrib': cmd_contrib,
+    }
+
+    cmd_func = commands.get(args.command)
+    if cmd_func:
+        cmd_func(args)
+    else:
+        parser.print_help()
+
+if __name__ == '__main__':
+    main()
