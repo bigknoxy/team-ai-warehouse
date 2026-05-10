@@ -1,0 +1,28 @@
+name: Configure Branch Protection
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to protect'
+        default: 'main'
+        required: true
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      administration: write
+    steps:
+      - name: Configure branch protection
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/branches/${{ github.event.inputs.branch }}/protection \
+            --method PUT \
+            --field required_status_checks=null \
+            --field required_pull_request_reviews='{"dismiss_stale_reviews":true,"required_approving_review_count":1,"include_admin_by_default":false}' \
+            --field restrictions=null \
+            --field enforce_admins=false
+        shell: bash

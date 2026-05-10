@@ -1,0 +1,64 @@
+name: Warehouse CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate all skills
+        run: |
+          for skill in skills/gstack/*/ skills/team/*/ skills/personal/*/; do
+            if [ -f "$skill/SKILL.md" ]; then
+              python3 scripts/validate-skill.py "$skill" || exit 1
+            fi
+          done
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest pyyaml
+
+      - name: Run validation tests
+        run: python3 -m pytest testing/test_validate_skill.py -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint Python scripts
+        run: ruff check scripts/ testing/
+
+      - name: Check formatting
+        run: ruff format --check scripts/ testing/
