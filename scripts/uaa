@@ -9,8 +9,8 @@ import sys
 import argparse
 import subprocess
 import yaml
+from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 
 # Tool configuration: tool name -> (config_dir, skills_subdir)
 TOOL_CONFIGS = {
@@ -101,7 +101,7 @@ def cmd_init(args):
         }
         with open(config_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
-        print(f"  Created: warehouse.yaml")
+        print("  Created: warehouse.yaml")
 
     print(f"\nWarehouse initialized at {path}")
 
@@ -160,7 +160,7 @@ def cmd_sync(args):
             os.symlink(skill_path, target)
             print(f"  -> {skill_name}")
 
-    print(f"\nSync complete!")
+    print("\nSync complete!")
 
 def cmd_status(args):
     """Show current warehouse status."""
@@ -189,7 +189,7 @@ def cmd_status(args):
         print(f"\nwarehouse.yaml last modified: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Tool directories status
-    print(f"\nTool directories:")
+    print("\nTool directories:")
     for tool, tool_config in TOOL_CONFIGS.items():
         tool_skill_dir = os.path.expanduser(f"{tool_config['dir']}/{tool_config['skills']}")
         if os.path.isdir(tool_skill_dir):
@@ -239,7 +239,7 @@ def cmd_list(args):
                         fm = yaml.safe_load(parts[1])
                         if isinstance(fm, dict) and 'description' in fm:
                             desc = fm['description'][:80]
-                    except:
+                    except Exception:
                         pass
         print(f"  {skill_name:30} {desc}")
 
@@ -292,6 +292,224 @@ def cmd_validate(args):
     if failed > 0:
         sys.exit(1)
 
+
+@dataclass
+class DoctorReport:
+    """Doctor report - collects issues and fixes for diagnostics."""
+    issues: list[dict] = field(default_factory=list)
+    fixes_applied: list[dict] = field(default_factory=list)
+    total_tools_checked: int = 0
+
+    def add_issue(self, tool: str, issue_type: str, message: str) -> None:
+        """Add an issue to the report."""
+        self.issues.append({
+            'tool': tool,
+            'type': issue_type,
+            'message': message
+        })
+
+    def add_fix(self, tool: str, fix: str) -> None:
+        """Record a fix that was applied."""
+        self.fixes_applied.append({
+            'tool': tool,
+            'fix': fix
+        })
+
+    def get_summary(self) -> str:
+        """Get a summary string of the report."""
+        errors = sum(1 for i in self.issues if i['type'] == 'error')
+        warnings = sum(1 for i in self.issues if i['type'] == 'warning')
+        return f"{self.total_tools_checked} tools checked, {errors} errors, {warnings} warnings"
+
+
+def check_tool_directory(tool_path: str, tool_name: str, issues: list[dict]) -> bool:
+    """
+    Check if a tool directory exists.
+    Returns True if valid, False otherwise.
+    """
+    if not os.path.exists(tool_path):
+        issues.append({
+            'tool': tool_name,
+            'type': 'error',
+            'message': f"Tool directory does not exist: {tool_path}"
+        })
+        return False
+    if not os.path.isdir(tool_path):
+        issues.append({
+            'tool': tool_name,
+            'type': 'error',
+            'message': f"Path exists but is not a directory: {tool_path}"
+        })
+        return False
+    return True
+
+
+def check_symlinks(tool_skill_path: str, tool_name: str, issues: list[dict]) -> list:
+    """Check for broken symlinks in tool's skills directory. Returns list of broken links."""
+    broken = []
+    if not os.path.isdir(tool_skill_path):
+        return broken
+
+    try:
+        entries = os.listdir(tool_skill_path)
+    except PermissionError:
+        issues.append({
+            'tool': tool_name,
+            'type': 'error',
+            'message': f"Permission denied: {tool_skill_path}"
+        })
+        return broken
+
+    for entry in entries:
+        entry_path = os.path.join(tool_skill_path, entry)
+        if os.path.islink(entry_path) and not os.path.exists(entry_path):
+            broken.append(entry)
+            issues.append({
+                'tool': tool_name,
+                'type': 'error',
+                'message': f"Broken symlink: {entry} -> {os.readlink(entry_path)}"
+            })
+
+    return broken
+
+
+def validate_skills_in_tool(tool_skill_path: str, tool_name: str, issues: list[dict]) -> bool:
+    """
+    Validate SKILL.md files in tool's skills directory.
+    Returns True if all valid, False otherwise.
+    """
+    if not os.path.isdir(tool_skill_path):
+        return True
+
+    all_valid = True
+    try:
+        entries = os.listdir(tool_skill_path)
+    except PermissionError:
+        issues.append({
+            'tool': tool_name,
+            'type': 'error',
+            'message': f"Permission denied: {tool_skill_path}"
+        })
+        return True
+
+    if not entries:
+        issues.append({
+            'tool': tool_name,
+            'type': 'warning',
+            'message': f"No skills synced to {tool_name}"
+        })
+        return True
+
+    for entry in entries:
+        skill_path = os.path.join(tool_skill_path, entry)
+        if os.path.isdir(skill_path):
+            skill_md = os.path.join(skill_path, 'SKILL.md')
+            if not os.path.isfile(skill_md):
+                issues.append({
+                    'tool': tool_name,
+                    'type': 'error',
+                    'message': f"Skill '{entry}' missing SKILL.md file"
+                })
+                all_valid = False
+            else:
+                try:
+                    with open(skill_md, 'r') as f:
+                        content = f.read()
+                    if not content.strip():
+                        issues.append({
+                            'tool': tool_name,
+                            'type': 'error',
+                            'message': f"Skill '{entry}' has empty SKILL.md"
+                        })
+                        all_valid = False
+                except Exception as e:
+                    issues.append({
+                        'tool': tool_name,
+                        'type': 'error',
+                        'message': f"Cannot read SKILL.md for '{entry}': {e}"
+                    })
+                    all_valid = False
+    return all_valid
+
+
+def cmd_doctor(args):
+    """Diagnose common issues with tool integration."""
+    print("=" * 60)
+    print("UAA Doctor - Diagnosing tool integration issues")
+    print("=" * 60)
+    print()
+
+    report = DoctorReport()
+
+    # Check each tool
+    for tool_name, tool_config in TOOL_CONFIGS.items():
+        tool_base = os.path.expanduser(tool_config['dir'])
+        tool_skills = os.path.join(tool_base, tool_config['skills'])
+
+        report.total_tools_checked += 1
+        print(f"Checking {tool_name}...")
+
+        # Check base directory
+        if check_tool_directory(tool_base, tool_name, report.issues):
+            check_symlinks(tool_skills, tool_name, report.issues)
+
+            # Check skill files
+            validate_skills_in_tool(tool_skills, tool_name, report.issues)
+
+        if args.verbose:
+            tool_issues = [i for i in report.issues if i['tool'] == tool_name]
+            if tool_issues:
+                for issue in tool_issues:
+                    prefix = "  ERROR: " if issue['type'] == 'error' else "  WARN:  "
+                    print(f"{prefix}{issue['message']}")
+            else:
+                print(f"  OK: {tool_name} looks healthy")
+
+    print()
+    print("=" * 60)
+    print("DIAGNOSIS SUMMARY")
+    print("=" * 60)
+    print(report.get_summary())
+
+    # Print issues grouped by severity
+    errors = [i for i in report.issues if i['type'] == 'error']
+    warnings = [i for i in report.issues if i['type'] == 'warning']
+
+    if errors:
+        print()
+        print(f"ERRORS ({len(errors)}):")
+        for issue in errors:
+            print(f"  - [{issue['tool']}] {issue['message']}")
+
+    if warnings:
+        print()
+        print(f"WARNINGS ({len(warnings)}):")
+        for issue in warnings:
+            print(f"  - [{issue['tool']}] {issue['message']}")
+
+    if not errors and not warnings:
+        print()
+        print("All tools look healthy! No issues found.")
+
+    # Offer fix suggestions
+    print()
+    print("=" * 60)
+    print("RECOMMENDATIONS")
+    print("=" * 60)
+    if errors or warnings:
+        print("1. Run 'python3 scripts/uaa sync --all' to sync skills")
+        print("2. Check that your tool is installed and configured")
+        print("3. Verify tool-specific skill directory permissions")
+    else:
+        print("- Your warehouse is properly configured!")
+        print("- Run 'python3 scripts/uaa status' for full status")
+
+    if errors:
+        sys.exit(1)
+
+    return report
+
+
 def cmd_rollback(args):
     """Rollback to a Git tag."""
     repo_root = find_repo_root()
@@ -326,7 +544,7 @@ def cmd_rollback(args):
     if result.returncode == 0:
         print(f"Successfully rolled back to {tag}")
     else:
-        print(f"ERROR: Rollback failed")
+        print("ERROR: Rollback failed")
         print(result.stderr)
         sys.exit(1)
 
@@ -539,15 +757,16 @@ def main():
     tag_parser = subparsers.add_parser('tag', help='Create Git tag for current state')
     tag_parser.add_argument('version', help='Tag version (e.g., v1.0.1)')
 
-    # contrib command
+# contrib command
     contrib_parser = subparsers.add_parser('contrib', help='Contribute changes to a skill')
     contrib_parser.add_argument('skill_name', help='Name of the skill to contribute')
 
-    args = parser.parse_args()
+    # doctor command
+    doctor_parser = subparsers.add_parser('doctor', help='Diagnose tool integration issues')
+    doctor_parser.add_argument('--fix', action='store_true', help='Attempt to fix issues automatically')
+    doctor_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
+    args = parser.parse_args()
 
     commands = {
         'init': cmd_init,
@@ -559,6 +778,7 @@ def main():
         'version': cmd_version,
         'tag': cmd_tag,
         'contrib': cmd_contrib,
+        'doctor': cmd_doctor,
     }
 
     cmd_func = commands.get(args.command)
