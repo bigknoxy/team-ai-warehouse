@@ -1,0 +1,69 @@
+version: "1.0"
+owner: team
+last_updated: "2026-05-14"
+
+requirements:
+  UAASP-REQ-001:
+    title: "Skills must be validate-able"
+    description: "Every skill must pass validation before sync"
+    priority: "critical"
+    verification:
+      test_file: "testing/test_validate_skill.py"
+      validation_script: "scripts/validate-skill.py"
+      
+  UAASP-REQ-002:
+    title: "Validation must be automatable"
+    description: "Validation must run without human intervention"
+    priority: "high"
+    verification:
+      workflow: ".github/workflows/ci.yml"
+      
+  UAASP-REQ-003:
+    title: "Skills must be discoverable"
+    description: "Tools can discover and load skills on demand"
+    priority: "high"
+    verification:
+      test_file: "testing/test_doctor.py"
+      
+  UAASP-REQ-004:
+    title: "Sync must update tool directories"
+    description: "Sync command copies skills to Claude/Codex directories"
+    priority: "high"
+    verification:
+      command: "python3 scripts/uaa sync --all"
+      
+  UAASP-REQ-005:
+    title: "One-line install/uninstall"
+    description: "Users can install with curl ... | bash and uninstall with --uninstall"
+    priority: "high"
+    verification:
+      script: "scripts/setup.sh"
+      
+  UAASP-REQ-006:
+    title: "Doctor command for diagnostics"
+    description: "uaa doctor command to diagnose tool integration issues"
+    priority: "medium"
+    verification:
+      test_file: "testing/test_doctor.py"
+      command: "python3 scripts/uaa doctor"
+      
+  UAASP-REQ-007:
+    title: "CI/CD pipeline"
+    description: "Automated CI runs tests and validation on PRs"
+    priority: "high"
+    verification:
+      workflow: ".github/workflows/ci.yml"
+      
+  UAASP-REQ-008:
+    title: "Release automation"
+    description: "Auto-create GitHub Release on tag push"
+    priority: "medium"
+    verification:
+      workflow: ".github/workflows/release.yml"
+      
+  UAASP-REQ-009:
+    title: "Branch protection"
+    description: "Main branch requires PR and admin cannot bypass"
+    priority: "high"
+    verification:
+      config: "GitHub branch protection rules"

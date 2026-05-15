@@ -1,0 +1,52 @@
+version: "1.0"
+last_updated: "2026-05-14"
+
+mappings:
+  scripts/validate-skill.py:
+    implements:
+      - UAASP-REQ-001
+    verified_by:
+      - testing/test_validate_skill.py
+
+  scripts/uaa (doctor command):
+    implements:
+      - UAASP-REQ-006
+    verified_by:
+      - testing/test_doctor.py
+
+  scripts/uaa (sync command):
+    implements:
+      - UAASP-REQ-004
+    verification: command output
+
+  skills/team/code-review:
+    implements:
+      - UAASP-REQ-003
+    verification: manual review
+
+  skills/gstack/validate-skill:
+    implements:
+      - UAASP-REQ-001
+    verified_by:
+      - testing/test_validate_skill.py
+
+  skills/gstack/doctor:
+    implements:
+      - UAASP-REQ-006
+    verified_by:
+      - testing/test_doctor.py
+
+  skills/gstack/sync:
+    implements:
+      - UAASP-REQ-004
+    verification: command output
+
+  skills/gstack/qa:
+    helps_verify:
+      - UAASP-REQ-001
+      - UAASP-REQ-002
+      - UAASP-REQ-003
+      - UAASP-REQ-004
+      - UAASP-REQ-005
+      - UAASP-REQ-006
+    verification: test execution results
